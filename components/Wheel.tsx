@@ -1,212 +1,172 @@
 "use client";
 
-import React, { useRef, useEffect, useState, useCallback } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { WheelEntry } from "@/types/wheel";
-import { selectWithProbability } from "@/lib/storage";
 
 interface WheelCanvasProps {
   entries: WheelEntry[];
-  isRigged: boolean;
   onSpinComplete?: (winner: WheelEntry) => void;
 }
 
 export default function WheelCanvas({
   entries,
-  isRigged,
   onSpinComplete,
 }: WheelCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [isSpinning, setIsSpinning] = useState(false);
-  const [rotation, setRotation] = useState(0);
+  const [spinning, setSpinning] = useState(false);
   const [winner, setWinner] = useState<WheelEntry | null>(null);
-  const animationRef = useRef<number>();
-  const startAngleRef = useRef(0);
+  const [rotation, setRotation] = useState(0);
 
-  const drawWheel = useCallback(() => {
+  // Draw the wheel
+  const drawWheel = (rotationAngle: number) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const centerX = canvas.width / 2;
-    const centerY = canvas.height / 2;
-    const radius = Math.min(centerX, centerY) - 20;
+    const size = canvas.width;
+    const center = size / 2;
+    const radius = center - 10;
 
-    // Clear canvas
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, size, size);
 
     if (entries.length === 0) {
-      ctx.font = "16px Gilroy";
-      ctx.fillStyle = "#666";
+      ctx.fillStyle = "#777";
+      ctx.font = "16px sans-serif";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      ctx.fillText("Өгөгдөл оруулаарай хө😉", centerX, centerY);
+      ctx.fillText("Add entries to spin!", center, center);
       return;
     }
 
-    const anglePerSlice = (2 * Math.PI) / entries.length;
+    const slice = (2 * Math.PI) / entries.length;
 
-    // Draw slices
-    entries.forEach((entry, index) => {
-      const startAngle = startAngleRef.current + index * anglePerSlice;
-      const endAngle = startAngle + anglePerSlice;
+    entries.forEach((entry, i) => {
+      const start = rotationAngle + i * slice;
+      const end = start + slice;
 
       // Draw slice
       ctx.beginPath();
-      ctx.moveTo(centerX, centerY);
-      ctx.arc(centerX, centerY, radius, startAngle, endAngle);
+      ctx.moveTo(center, center);
+      ctx.arc(center, center, radius, start, end);
       ctx.closePath();
-      ctx.fillStyle = entry.color || "#ccc";
+      ctx.fillStyle = entry.color || (i % 2 === 0 ? "#3b82f6" : "#60a5fa");
       ctx.fill();
       ctx.strokeStyle = "#fff";
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // Draw text
+      // Draw text - fit automatically inside slice
+      const textRadius = radius - 20; // near outer edge
       ctx.save();
-      ctx.translate(centerX, centerY);
-      ctx.rotate(startAngle + anglePerSlice / 2);
-      ctx.textAlign = "left";
-      ctx.fillStyle = "#fff";
-      ctx.font = "bold 14px Arial";
-      ctx.shadowColor = "rgba(0,0,0,0.5)";
-      ctx.shadowBlur = 3;
+      ctx.translate(center, center);
+      ctx.rotate(start + slice / 2);
 
-      const maxWidth = radius - 20;
-      const text = entry.text;
-      const textWidth = ctx.measureText(text).width;
-
-      if (textWidth > maxWidth) {
-        const scale = maxWidth / textWidth;
-        ctx.font = `bold ${14 * scale}px Arial`;
+      // Scale text to fit slice
+      const maxWidth = radius * slice * 0.6; // 60% of arc length
+      let fontSize = 16;
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      let textWidth = ctx.measureText(entry.text).width;
+      while (textWidth > maxWidth && fontSize > 6) {
+        fontSize -= 1;
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        textWidth = ctx.measureText(entry.text).width;
       }
 
-      ctx.fillText(text, 30, 0);
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#fff";
+      ctx.fillText(entry.text, textRadius, 0);
       ctx.restore();
     });
 
-    // Draw center circle
+    // Center hub
     ctx.beginPath();
-    ctx.arc(centerX, centerY, 20, 0, 2 * Math.PI);
-    ctx.fillStyle = "#333";
+    ctx.arc(center, center, 20, 0, 2 * Math.PI);
+    ctx.fillStyle = "#1e3a8a";
     ctx.fill();
-    ctx.strokeStyle = "#fff";
-    ctx.lineWidth = 2;
-    ctx.stroke();
 
-    // Draw pointer
+    // Pointer triangle - tip only inside
+    ctx.save();
+    ctx.translate(center, center);
+    ctx.rotate(-Math.PI / 2); // point upward
+    const tip = radius - 10; // tip inside the wheel
+    const base = radius + 20; // base outside
     ctx.beginPath();
-    ctx.moveTo(centerX + radius + 10, centerY);
-    ctx.lineTo(centerX + radius - 15, centerY - 15);
-    ctx.lineTo(centerX + radius - 15, centerY + 15);
+    ctx.moveTo(0, -tip); // tip
+    ctx.lineTo(-15, -base); // left base
+    ctx.lineTo(15, -base); // right base
     ctx.closePath();
-    ctx.fillStyle = "#FF0000";
+    ctx.fillStyle = "#ef4444";
     ctx.fill();
-    ctx.strokeStyle = "#8B0000";
+    ctx.strokeStyle = "#b91c1c";
     ctx.lineWidth = 2;
     ctx.stroke();
-  }, [entries]);
-
-  useEffect(() => {
-    drawWheel();
-  }, [drawWheel, rotation]);
-
-  const spin = () => {
-    if (isSpinning || entries.length === 0) return;
-
-    setIsSpinning(true);
-    setWinner(null);
-
-    // Select winner based on rigged mode
-    const selectedEntry = isRigged
-      ? selectWithProbability(entries)
-      : entries[Math.floor(Math.random() * entries.length)];
-
-    // Calculate final angle to land on the selected entry
-    const entryIndex = entries.indexOf(selectedEntry);
-    const anglePerSlice = (2 * Math.PI) / entries.length;
-    const targetAngle = -entryIndex * anglePerSlice - anglePerSlice / 2;
-
-    // Add multiple rotations for effect
-    const totalRotation = targetAngle + Math.PI * 2 * (5 + Math.random() * 3);
-
-    let start: number;
-    let currentRotation = startAngleRef.current;
-
-    const animate = (timestamp: number) => {
-      if (!start) start = timestamp;
-      const elapsed = timestamp - start;
-      const duration = 4000; // 4 seconds
-      const progress = Math.min(elapsed / duration, 1);
-
-      // Easing function for smooth deceleration
-      const easeOut = 1 - Math.pow(1 - progress, 3);
-
-      currentRotation = startAngleRef.current + totalRotation * easeOut;
-
-      const canvas = canvasRef.current;
-      if (canvas) {
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.save();
-          ctx.translate(canvas.width / 2, canvas.height / 2);
-          ctx.rotate(currentRotation - startAngleRef.current);
-          ctx.translate(-canvas.width / 2, -canvas.height / 2);
-          startAngleRef.current = currentRotation % (2 * Math.PI);
-          drawWheel();
-          ctx.restore();
-        }
-      }
-
-      if (progress < 1) {
-        animationRef.current = requestAnimationFrame(animate);
-      } else {
-        setIsSpinning(false);
-        setWinner(selectedEntry);
-        onSpinComplete?.(selectedEntry);
-      }
-    };
-
-    animationRef.current = requestAnimationFrame(animate);
+    ctx.restore();
   };
 
   useEffect(() => {
-    return () => {
-      if (animationRef.current) {
-        cancelAnimationFrame(animationRef.current);
+    drawWheel(rotation);
+  }, [entries, rotation]);
+
+  const spin = () => {
+    if (spinning || entries.length === 0) return;
+    setSpinning(true);
+    setWinner(null);
+
+    const spinDuration = 4000;
+    const finalRotation = rotation + Math.PI * 10 + Math.random() * Math.PI * 2;
+
+    const startTime = performance.now();
+
+    const animate = (time: number) => {
+      const progress = Math.min((time - startTime) / spinDuration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const angle = rotation + (finalRotation - rotation) * eased;
+      setRotation(angle);
+      drawWheel(angle);
+
+      if (progress < 1) {
+        requestAnimationFrame(animate);
+      } else {
+        setSpinning(false);
+        const normalized =
+          ((angle % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+        const slice = (2 * Math.PI) / entries.length;
+        const index = Math.floor(
+          ((2 * Math.PI - normalized + slice / 2) % (2 * Math.PI)) / slice
+        );
+        const selected = entries[index];
+        setWinner(selected);
+        if (onSpinComplete) onSpinComplete(selected);
       }
     };
-  }, []);
+
+    requestAnimationFrame(animate);
+  };
 
   return (
-    <div className="flex flex-col items-center gap-6">
-      <div className="relative">
-        <canvas
-          ref={canvasRef}
-          width={335}
-          height={335}
-          className="border-[2px] blur-[0.5px] border-blue-600 rounded-full shadow-lg shadow-slate-200"
-        />
-      </div>
-
+    <div className="flex flex-col items-center mt-8 space-y-4">
+      <canvas
+        ref={canvasRef}
+        width={320}
+        height={320}
+        className="rounded-full border-4 border-blue-500 shadow-md"
+      />
       <button
         onClick={spin}
-        disabled={isSpinning || entries.length === 0}
-        className={`blur-[0.75px] px-6 py-3 font-bold text-white rounded-full transition-all transform ${
-          isSpinning || entries.length === 0
+        disabled={spinning || entries.length === 0}
+        className={`px-6 py-2 text-white font-bold rounded-full ${
+          spinning || entries.length === 0
             ? "bg-gray-400 cursor-not-allowed"
-            : "bg-blue-600 hover:bg-blue-700 hover:scale-105 active:scale-95"
+            : "bg-blue-600 hover:bg-blue-700 active:scale-95 transition"
         }`}
       >
-        {isSpinning ? "Эргэж байна хө..." : "Erguuley🌀"}
+        {spinning ? "Spinning..." : "Spin 🌀"}
       </button>
-
       {winner && (
-        <div className="mt-4 p-4 bg-green-100 border-2 border-green-500 rounded-lg">
-          <p className="text-xl font-bold text-green-800">
-            🎉 Ялагч: {winner.text}
-          </p>
+        <div className="p-3 bg-green-100 border border-green-500 rounded-lg font-semibold text-green-800">
+          🎉 Winner: {winner.text}
         </div>
       )}
     </div>
